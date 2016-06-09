@@ -1,3 +1,30 @@
 .app {
      /* Add app styles here */
+    .confField {
+	  margin-right: 20px;
+	}
+	.left {
+	  float: left;
+	}
+	.storyGrid {
+	  margin: 10px 30px 0 0;
+	  width: 700px;
+	}
+	.durationGrid {
+	  float: left;
+	  width: 300px;
+	  margin: 10px 30px 0 0;
+	}
+	#confForm {
+	  width: 800px;
+	  margin-bottom: 20px;
+	  padding: 5px 5px 0;
+	}
+	#infoContainer {
+	  margin-bottom: 20px;
+	}
+	#appHint {
+	  font-size: 14px;
+	  color: red;
+	}
 }

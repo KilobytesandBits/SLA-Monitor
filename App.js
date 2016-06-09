@@ -1,9 +1,331 @@
-Ext.define('CustomApp', {
-    extend: 'Rally.app.App',
-    componentCls: 'app',
-    launch: function() {
-        //Write app code here
 
-        //API Docs: https://help.rallydev.com/apps/2.1/doc/
-    }
+var NOW = new Date();
+
+Ext.define('SLA-Monitor', {
+	extend : 'Rally.app.App',
+	componentCls : 'app',
+	defaultTeamSLA : 10,
+	getSettingsFields : function() {
+		return [ {
+			name : 'teamSLA',
+			fieldLabel : 'Team SLA value (days)',
+			xtype : 'rallynumberfield'
+		} ];
+	},
+	items : [ {
+		xtype : 'container',
+		id : 'infoContainer',
+		itemId : 'infoContainer',
+		border : 0
+	}, {
+		xtype : 'form',
+		title : 'Configuration',
+		frame : true,
+		collapsible : true,
+		collapsed : false,
+		id : 'confForm',
+		itemId : 'confForm',
+		layout : 'column',
+		items : [ {
+			xtype : 'datefield',
+			id : 'dateFrom',
+			itemId : 'dateFrom',
+			fieldLabel : 'Accepted between',
+			columnWidth : 0.4,
+			cls : 'confField',
+			value : Ext.Date.subtract(new Date(), Ext.Date.MONTH, 1)
+		// 1 months ago
+		}, {
+			xtype : 'datefield',
+			id : 'dateTo',
+			itemId : 'dateTo',
+			fieldLabel : 'and',
+			columnWidth : 0.4,
+			cls : 'confField',
+			value : NOW
+		}, {
+			xtype : 'rallybutton',
+			text : 'Submit',
+			columnWidth : 0.2,
+			handler : function() {
+				Rally.getApp().launch();
+			}
+		} ]
+	}, {
+		xtype : 'container',
+		id : 'appInfo',
+		itemId : 'appInfo',
+		border : 0
+	}, {
+		xtype : 'container',
+		id : 'durationContainer',
+		itemId : 'durationContainer'
+	} ],
+	launch : function() {
+		this.init();
+		this.loadStoriesAndSnapshots().then(this.createGrids);
+	},
+	init : function() {
+		var info = '<h1>SLA Monitor</h1>';
+		this.defaultTeamSLA = 10;
+
+		if (this.kanbanDurationGrid) { //Destroy grids
+			this.kanbanDurationGrid.destroy();
+			this.scheduleStateDurationGrid.destroy();
+			this.overSLAGrid.destroy();
+			this.underSLAGrid.destroy();
+		}
+
+		if (!this.isTeamSLASet()) {
+			info += '<div id="appHint">Please set a value for the Team SLA in the App-Settings.<br/>A default of <b>' + this.defaultTeamSLA + ' days</b> is used.</div>';
+		}
+
+		this.dataStore = {
+			kanbanStateDurations : {},
+			scheduleStateDurations : {},
+			kanbanStates : {},
+			scheduleStates : {}
+		};
+
+		Ext.getCmp('infoContainer').update(info);
+	},
+	createGrids : function(data) {
+		var me = Rally.getApp();
+
+		if (data.totalAcceptedStories === 0) {
+			Ext.getCmp('appInfo').update('No accepted stories found');
+		} else {
+			Ext.getCmp('appInfo').update('<h3>Average Cycle (in progress)-Time: ' + data.avgCycleTime + ' days</h3>');
+			//Add Grids
+			me.kanbanDurationGrid = me.down('#durationContainer').add(me.getDurationGrid(data.kanbanDurationStore, 'c_KanbanState', 'Durations by Kanban-State'));
+			me.scheduleStateDurationGrid = me.down('#durationContainer').add(me.getDurationGrid(data.scheduleStateDurationStore, 'ScheduleState', 'Durations by Schedule-State'));
+			me.overSLAGrid = me.add(me.getStoryGrid(data.overSLAStore, 'Cycle Time &gt; SLA limit (' + me.getTeamSLA() + ' days)', 'left'));
+			me.underSLAGrid = me.add(me.getStoryGrid(data.underSLAStore, 'Cycle Time &lt; SLA Limit  (' + me.getTeamSLA() + ' days)', 'left'));
+		}
+	},
+	getDurationGrid : function(store, state, title) {
+		return Ext.create('Rally.ui.grid.Grid', {
+			title : title,
+			store : store,
+			cls : 'durationGrid',
+			showPagingToolbar : false,
+			showRowActionsColumn : false,
+			columnCfgs : [ {
+				text : 'State',
+				renderer : function(value, meta, record) {
+					return record.get('snapshot')[state];
+				}
+			}, {
+				text : 'AVG time',
+				renderer : function(value, meta, record) {
+					return Math.ceil(record.get('workdays') / record.get('storyCount')) + ' days';
+				}
+			}, {
+				text : '# Stories',
+				dataIndex : 'storyCount'
+			} ]
+		});
+	},
+	getStoryGrid : function(store, title, css) {
+		var cssClass = 'storyGrid';
+		return Ext.create('Rally.ui.grid.Grid', {
+			title : title,
+			store : store,
+			cls : _.isUndefined(css) ? cssClass : cssClass + ' ' + css,
+			showRowActionsColumn : false,
+			columnCfgs : [ {
+				text : 'Formatted-ID',
+				dataIndex : 'FormattedID',
+				xtype : 'templatecolumn',
+				tpl : Ext.create('Rally.ui.renderer.template.FormattedIDTemplate')
+			}, {
+				text : 'Name',
+				dataIndex : 'Name',
+				width : 500
+			}, {
+				text : 'Cycle-Time',
+				renderer : function(value, meta, record) {
+					return record.get('cycleTime').toFixed(1) + ' days';
+				}
+			} ],
+			storeConfig : {
+				model : 'userstory'
+			}
+		});
+	},
+	loadStoriesAndSnapshots : function() {
+		var start = Ext.Date.format(Ext.getCmp('dateFrom').getValue(), "Y-m-d");
+		var end = Ext.Date.format(Ext.getCmp('dateTo').getValue(), "Y-m-d");
+		var me = this;
+		var snapshots = this.getSnapshots({
+			fetch : [ 'ObjectID' ],
+			findConfig : {
+				"_TypeHierarchy" : "HierarchicalRequirement",
+				"_PreviousValues.ScheduleState" : {
+					"$exists" : true,
+					"$lt" : "Accepted"
+				},
+				"ScheduleState" : {
+					"$gte" : "Accepted"
+				},
+				"_ValidFrom" : {
+					"$lt" : end,
+					"$gte" : start
+				},
+				"Project" : this.context.getProject().ObjectID
+			}
+		});
+		return Deft.Promise.all([ snapshots ]).then(function(results) {
+			var ids = [];
+			_.each(results[0], function(r) {
+				if (ids.indexOf(r.ObjectID < 0)) {
+					ids.push(r.ObjectID);
+				}
+			});
+			return me.loadStories(ids);
+		});
+	},
+	loadStories : function(ids) {
+		var me = Rally.getApp();
+		var snapshots = me.getSnapshots({
+			fetch : [ '_ValidFrom', '_ValidTo', 'c_KanbanState', 'ScheduleState', '_UnformattedID', 'Name', 'Blocked' ],
+			hydrate : [ 'ScheduleState' ],
+			findConfig : {
+				"ObjectID" : {
+					"$in" : ids
+				}
+			}
+		});
+
+		return Deft.Promise.all([ snapshots ]).then(function(result) {
+			var stories = result[0], workdays, validTo;
+			var results = {
+				stories : {},
+				totalAcceptedStories : 0,
+				totalInProgressWorkDays : 0
+			};
+
+			_.each(stories, function(snapshot) {
+				snapshot.cycleTime = snapshot.cycleTime || 0;
+				snapshot.FormattedID = snapshot.FormattedID || "US" + snapshot._UnformattedID;
+				snapshot._ref = snapshot._ref || '/userstory/' + snapshot.ObjectID;
+				snapshot.c_KanbanState = snapshot.c_KanbanState || "No Kanban State";
+
+				me.initStates(snapshot);
+				validTo = (snapshot._ValidTo.indexOf('9999') >= 0) ? NOW : snapshot._ValidTo;
+				workdays = me.getWorkingDays(snapshot._ValidFrom, validTo);
+
+				if (_.isUndefined(results.stories[snapshot.ObjectID])) {
+					results.stories[snapshot.ObjectID] = snapshot;
+					results.totalAcceptedStories++;
+					me.dataStore.kanbanStates[snapshot.ObjectID] = [];
+					me.dataStore.scheduleStates[snapshot.ObjectID] = [];
+				}
+
+				if (snapshot.ScheduleState === 'In-Progress' && !snapshot.Blocked) {
+					results.stories[snapshot.ObjectID].cycleTime += workdays;
+					results.totalInProgressWorkDays += workdays;
+				}
+
+				me.updateStates(snapshot, workdays);
+			});
+
+			results.avgCycleTime = Math.ceil(results.totalInProgressWorkDays / results.totalAcceptedStories);
+			results.kanbanDurationStore = me.createCustomStore(_.values(me.dataStore.kanbanStateDurations));
+			results.scheduleStateDurationStore = me.createCustomStore(_.values(me.dataStore.scheduleStateDurations));
+
+			return me.getOutliers(results);
+		});
+	},
+	initStates : function(snapshot) {
+		this.dataStore.kanbanStateDurations[snapshot.c_KanbanState] = this.dataStore.kanbanStateDurations[snapshot.c_KanbanState] || {
+			storyCount : 0,
+			workdays : 0,
+			snapshot : snapshot
+		}, this.dataStore.scheduleStateDurations[snapshot.ScheduleState] = this.dataStore.scheduleStateDurations[snapshot.ScheduleState] || {
+			storyCount : 0,
+			workdays : 0,
+			snapshot : snapshot
+		};
+	},
+	updateStates : function(snapshot, workdays) {
+		if (this.dataStore.kanbanStates[snapshot.ObjectID].indexOf(snapshot.c_KanbanState) < 0) {
+			this.dataStore.kanbanStates[snapshot.ObjectID].push(snapshot.c_KanbanState);
+			this.dataStore.kanbanStateDurations[snapshot.c_KanbanState].storyCount++;
+		}
+
+		if (this.dataStore.scheduleStates[snapshot.ObjectID].indexOf(snapshot.ScheduleState) < 0) {
+			this.dataStore.scheduleStates[snapshot.ObjectID].push(snapshot.ScheduleState);
+			this.dataStore.scheduleStateDurations[snapshot.ScheduleState].storyCount++;
+		}
+
+		this.dataStore.kanbanStateDurations[snapshot.c_KanbanState].workdays += workdays;
+		this.dataStore.scheduleStateDurations[snapshot.ScheduleState].workdays += workdays;
+	},
+	getOutliers : function(data) {
+		var teamSLA = this.getTeamSLA();
+		var overSLAStories = [], underSLAStories = [];
+
+		_.each(data.stories, function(story, ObjectID) {
+			if (story.cycleTime > teamSLA) {
+				overSLAStories.push(story);
+			}
+			if (story.cycleTime <= teamSLA) {
+				underSLAStories.push(story);
+			}
+		});
+
+		data.overSLAStore = Rally.getApp().createCustomStore(_.sortBy(overSLAStories, 'cycleTime').reverse());
+		data.underSLAStore = Rally.getApp().createCustomStore(_.sortBy(underSLAStories, 'cycleTime').reverse());
+
+		return data;
+	},
+	createCustomStore : function(data) {
+		return Ext.create('Rally.data.custom.Store', {
+			data : data
+		});
+	},
+	getTeamSLA : function() {
+		return this.isTeamSLASet() ? this.getSetting('teamSLA') : this.defaultTeamSLA;
+	},
+	isTeamSLASet : function() {
+		return _.parseInt(this.getSetting('teamSLA')) > 0;
+	},
+	getSnapshots : function(config) {
+		var workspaceOid = this.context.getWorkspace().ObjectID;
+		var deferred = new Deft.Deferred();
+		Ext.create('Rally.data.lookback.SnapshotStore', _.merge({
+			// TODO - account for > 20k results
+			autoLoad : true,
+			context : {
+				workspace : '/workspace/' + workspaceOid
+			},
+			listeners : {
+				load : function(store, data, success) {
+					deferred.resolve(_.pluck(data, 'raw'));
+				}
+			}
+		}, config));
+
+		return deferred.getPromise();
+	},
+	getWorkingDays : function(startDate, endDate) {
+		var currentDate = new Date(startDate), result = 0, weekDay, difference;
+		var minutes = 1000 * 60;
+		var hours = minutes * 60;
+		var days = hours * 24;
+		endDate = new Date(endDate);
+
+		while (currentDate <= endDate) {
+			difference = (endDate.getTime() / days) - (currentDate.getTime() / days);
+			if (difference > 0) { //only count days when difference is >= 1 day
+				weekDay = currentDate.getDay();
+				if (weekDay !== 0 && weekDay !== 6) {
+					result += difference > 1 ? 1 : difference;
+				}
+			}
+			currentDate.setDate(currentDate.getDate() + 1);
+		}
+		return result;
+	}
 });
