@@ -3,6 +3,22 @@
     .confField {
 	  margin-right: 20px;
 	}
+	.confCheckboxField {
+	  margin-right: 20px;
+	}
+	label#excludeBlockedDuration-labelEl {
+	  width: 135px !important;
+	}
+	td#excludeBlockedDuration-labelCell {
+	  width: 140px !important;
+	}
+	.confSubmitBtn {
+	  margin-top: 10px;
+	  margin-bottom: 15px;
+	  margin-left: 30%;
+	  padding: 6px;
+	  width: 325px !important;
+	}
 	.left {
 	  float: left;
 	}

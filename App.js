@@ -31,7 +31,7 @@ Ext.define('SLA-Monitor', {
 			id : 'dateFrom',
 			itemId : 'dateFrom',
 			fieldLabel : 'Accepted between',
-			columnWidth : 0.4,
+			columnWidth : 0.5,
 			cls : 'confField',
 			value : Ext.Date.subtract(new Date(), Ext.Date.MONTH, 1)
 		// 1 months ago
@@ -40,13 +40,21 @@ Ext.define('SLA-Monitor', {
 			id : 'dateTo',
 			itemId : 'dateTo',
 			fieldLabel : 'and',
-			columnWidth : 0.4,
+			columnWidth : 0.5,
 			cls : 'confField',
 			value : NOW
+		},{
+			xtype : 'checkbox',
+			id : 'excludeBlockedDuration',
+			itemId : 'excludeBlockedDuration',
+			fieldLabel : 'Exclude Blocked Duration',
+			columnWidth : 1,
+			cls : 'confCheckboxField'
 		}, {
 			xtype : 'rallybutton',
 			text : 'Submit',
-			columnWidth : 0.2,
+			columnWidth : 1,
+			cls : 'confSubmitBtn',
 			handler : function() {
 				Rally.getApp().launch();
 			}
@@ -88,6 +96,8 @@ Ext.define('SLA-Monitor', {
 		};
 
 		Ext.getCmp('infoContainer').update(info);
+		
+		this.excludeBlockedDurationVal = Ext.getCmp('excludeBlockedDuration').getValue();
 	},
 	createGrids : function(data) {
 		var me = Rally.getApp();
@@ -186,7 +196,7 @@ Ext.define('SLA-Monitor', {
 		});
 	},
 	loadStories : function(ids) {
-		var me = Rally.getApp();
+		var me = Rally.getApp(), that = this;
 		var snapshots = me.getSnapshots({
 			fetch : [ '_ValidFrom', '_ValidTo', 'c_KanbanState', 'ScheduleState', '_UnformattedID', 'Name', 'Blocked' ],
 			hydrate : [ 'ScheduleState' ],
@@ -221,11 +231,19 @@ Ext.define('SLA-Monitor', {
 					me.dataStore.kanbanStates[snapshot.ObjectID] = [];
 					me.dataStore.scheduleStates[snapshot.ObjectID] = [];
 				}
-
-				if (snapshot.ScheduleState === 'In-Progress' && !snapshot.Blocked) {
-					results.stories[snapshot.ObjectID].cycleTime += workdays;
-					results.totalInProgressWorkDays += workdays;
+				
+				if(that.excludeBlockedDurationVal){
+					if (snapshot.ScheduleState === 'In-Progress' && !snapshot.Blocked) {
+						results.stories[snapshot.ObjectID].cycleTime += workdays;
+						results.totalInProgressWorkDays += workdays;
+					}
+				}else {
+					if (snapshot.ScheduleState === 'In-Progress') {
+						results.stories[snapshot.ObjectID].cycleTime += workdays;
+						results.totalInProgressWorkDays += workdays;
+					}
 				}
+				
 
 				me.updateStates(snapshot, workdays);
 			});
